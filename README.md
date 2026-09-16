@@ -1,6 +1,8 @@
 # Sonarr v5 (Develop) Custom Build
 
-Custom Docker image build for **Sonarr v5 (`v5-develop`)** based on [LinuxServer.io Sonarr (develop)](https://github.com/linuxserver/docker-sonarr) with enhancements for CIS / tracker cumulative multi-episode releases and Transmission integration.
+> Sonarr on steroids: cumulative multi-episode pack support, smart selective downloading, and maybe more.
+
+Custom Docker image build for **Sonarr v5 (`v5-develop`)** based on [LinuxServer.io Sonarr (develop)](https://github.com/linuxserver/docker-sonarr).
 
 ---
 
@@ -35,30 +37,6 @@ services:
       - 8989:8989
     restart: unless-stopped
 ```
-
----
-
-## 🛠 Project Structure
-
-```text
-├── .github/
-│   └── workflows/
-│       └── build-and-push.yml   # CI/CD: Multi-arch (amd64/arm64) build & push to GHCR
-├── patches/
-│   └── multi-episode-pack.patch # DecisionEngine & Transmission selective download patch (v5)
-├── Dockerfile                   # Multi-stage build (.NET 10 SDK -> LinuxServer runtime)
-├── docker-compose.example.yml   # Example compose configuration
-├── .gitignore
-└── README.md
-```
-
----
-
-## ⚙️ GitHub Actions CI/CD
-
-- **Automated Builds**: Every push to the `v5` branch triggers a multi-platform build (`linux/amd64`, `linux/arm64`) and publishes to GitHub Container Registry (`ghcr.io/<USERNAME>/<REPO>:v5`).
-- **Workflow Dispatch**: Manually trigger builds from the **Actions** tab with custom upstream tags or base images.
-- **Weekly Schedule**: Automatically rebuilds weekly to incorporate the latest upstream updates and base image security patches.
 
 ---
 
