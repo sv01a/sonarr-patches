@@ -136,5 +136,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BASE_IMAGE=${{ steps.resolve_ver.outputs.base_image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          no-cache: true
