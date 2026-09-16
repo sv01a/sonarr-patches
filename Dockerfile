@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-ARG SONARR_VERSION=main
-ARG BASE_IMAGE=lscr.io/linuxserver/sonarr:latest
+ARG SONARR_VERSION=v5-develop
+ARG BASE_IMAGE=lscr.io/linuxserver/sonarr:develop
 
-# --- Build Stage (Cross-compilation using native builder platform) ---
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:6.0-bookworm-slim AS builder
+# --- Build Stage (.NET 10 SDK for Sonarr v5) ---
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-preview-bookworm-slim AS builder
 ARG SONARR_VERSION
 ARG TARGETARCH
 
@@ -27,10 +27,10 @@ RUN case "${TARGETARCH}" in \
       "arm")   RID="linux-musl-arm" ;; \
       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
-    echo "Publishing for runtime: $RID" && \
+    echo "Publishing Sonarr v5 for runtime: $RID" && \
     dotnet publish src/NzbDrone.Console/Sonarr.Console.csproj \
       -c Release \
-      -f net6.0 \
+      -f net10.0 \
       -r "$RID" \
       --self-contained true \
       -p:PublishTrimmed=false \

@@ -1,23 +1,23 @@
-name: Build and Publish Patched Sonarr Docker Image
+name: Build and Publish Patched Sonarr v5 Docker Image
 
 on:
   push:
     branches:
-      - main
+      - v5
     paths-ignore:
       - 'README.md'
       - '.gitignore'
   workflow_dispatch:
     inputs:
       sonarr_version:
-        description: 'Upstream Sonarr git tag or branch to build from (e.g. main, v4.0.19.2979)'
+        description: 'Upstream Sonarr v5 git tag or branch (e.g. v5-develop)'
         required: true
-        default: 'main'
+        default: 'v5-develop'
         type: string
       base_image:
         description: 'Base image from LinuxServer'
         required: true
-        default: 'lscr.io/linuxserver/sonarr:latest'
+        default: 'lscr.io/linuxserver/sonarr:develop'
         type: string
       push_image:
         description: 'Push image to GHCR'
@@ -25,7 +25,7 @@ on:
         default: true
         type: boolean
   schedule:
-    # Run every Sunday at 03:00 UTC to pick up upstream updates
+    # Run every Sunday at 03:00 UTC
     - cron: '0 3 * * 0'
 
 env:
@@ -60,8 +60,8 @@ jobs:
       - name: Determine Sonarr version
         id: vars
         run: |
-          VERSION="${{ github.event.inputs.sonarr_version || 'main' }}"
-          BASE="${{ github.event.inputs.base_image || 'lscr.io/linuxserver/sonarr:latest' }}"
+          VERSION="${{ github.event.inputs.sonarr_version || 'v5-develop' }}"
+          BASE="${{ github.event.inputs.base_image || 'lscr.io/linuxserver/sonarr:develop' }}"
           echo "sonarr_version=${VERSION}" >> $GITHUB_OUTPUT
           echo "base_image=${BASE}" >> $GITHUB_OUTPUT
 
@@ -71,7 +71,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=v5
+            type=raw,value=v5-latest
+            type=raw,value=develop
             type=raw,value=${{ steps.vars.outputs.sonarr_version }}
             type=sha,format=short
 
