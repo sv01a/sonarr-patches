@@ -1,0 +1,395 @@
+diff --git a/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs b/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs
+index 3e19af87c..f73d76cc8 100644
+--- a/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs
++++ b/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs
+@@ -90,17 +90,19 @@ public void both_episodes_not_monitored_should_return_false()
+         }
+ 
+         [Test]
+-        public void only_first_episode_not_monitored_should_return_false()
++        public void should_return_true_if_only_first_episode_not_monitored_for_multi_episode_release()
+         {
++            // Cumulative multi-episode pack is accepted as long as at least one episode is monitored.
+             WithFirstEpisodeUnmonitored();
+-            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeFalse();
++            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeTrue();
+         }
+ 
+         [Test]
+-        public void only_second_episode_not_monitored_should_return_false()
++        public void should_return_true_if_only_second_episode_not_monitored_for_multi_episode_release()
+         {
++            // Cumulative multi-episode pack is accepted as long as at least one episode is monitored.
+             WithSecondEpisodeUnmonitored();
+-            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeFalse();
++            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeTrue();
+         }
+ 
+         [Test]
+diff --git a/src/NzbDrone.Core.Test/DecisionEngineTests/UpgradeDiskSpecificationFixture.cs b/src/NzbDrone.Core.Test/DecisionEngineTests/UpgradeDiskSpecificationFixture.cs
+index c560368dc..2c39c45ce 100644
+--- a/src/NzbDrone.Core.Test/DecisionEngineTests/UpgradeDiskSpecificationFixture.cs
++++ b/src/NzbDrone.Core.Test/DecisionEngineTests/UpgradeDiskSpecificationFixture.cs
+@@ -43,8 +43,8 @@ public void Setup()
+             _firstFile = new EpisodeFile { Quality = new QualityModel(Quality.Bluray1080p, new Revision(version: 2)), DateAdded = DateTime.Now, Languages = new List<Language> { Language.English } };
+             _secondFile = new EpisodeFile { Quality = new QualityModel(Quality.Bluray1080p, new Revision(version: 2)), DateAdded = DateTime.Now, Languages = new List<Language> { Language.English } };
+ 
+-            var singleEpisodeList = new List<Episode> { new Episode { EpisodeFile = _firstFile, EpisodeFileId = 1 }, new Episode { EpisodeFile = null } };
+-            var doubleEpisodeList = new List<Episode> { new Episode { EpisodeFile = _firstFile, EpisodeFileId = 1 }, new Episode { EpisodeFile = _secondFile, EpisodeFileId = 1 }, new Episode { EpisodeFile = null } };
++            var singleEpisodeList = new List<Episode> { new Episode { EpisodeFile = _firstFile, EpisodeFileId = 1, Monitored = true } };
++            var doubleEpisodeList = new List<Episode> { new Episode { EpisodeFile = _firstFile, EpisodeFileId = 1, Monitored = true }, new Episode { EpisodeFile = _secondFile, EpisodeFileId = 1, Monitored = true }, new Episode { EpisodeFile = null, Monitored = true } };
+ 
+             var fakeSeries = Builder<Series>.CreateNew()
+                 .With(c => c.QualityProfile = new QualityProfile
+@@ -157,21 +157,40 @@ public void should_be_upgradable_if_both_episodes_are_upgradable()
+         [Test]
+         public void should_be_not_upgradable_if_both_episodes_are_not_upgradable()
+         {
++            // Two episodes on disk that both already meet the cutoff and no missing
++            // episode: nothing in the pack is wanted, reject it.
++            _parseResultMulti.Episodes = new List<Episode>
++                                         {
++                                             new Episode { EpisodeFile = _firstFile, EpisodeFileId = 1, Monitored = true },
++                                             new Episode { EpisodeFile = _secondFile, EpisodeFileId = 1, Monitored = true }
++                                         };
++
+             _upgradeDisk.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeFalse();
+         }
+ 
+         [Test]
+-        public void should_be_not_upgradable_if_only_first_episodes_is_upgradable()
++        public void should_be_upgradable_if_only_first_episode_is_upgradable()
+         {
++            // Pack contains a missing episode in addition to existing files,
++            // so it is accepted as long as at least one episode is wanted.
+             WithFirstFileUpgradable();
+-            _upgradeDisk.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeFalse();
++            _upgradeDisk.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeTrue();
+         }
+ 
+         [Test]
+-        public void should_be_not_upgradable_if_only_second_episodes_is_upgradable()
++        public void should_be_upgradable_if_only_second_episode_is_upgradable()
+         {
+             WithSecondFileUpgradable();
+-            _upgradeDisk.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeFalse();
++            _upgradeDisk.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeTrue();
++        }
++
++        [Test]
++        public void should_be_accepted_if_existing_episodes_meet_cutoff_but_pack_contains_missing_episode()
++        {
++            // Core scenario: existing episodes meet the cutoff, but the cumulative pack
++            // contains a missing (wanted) episode, so the whole release must be accepted.
++            GivenFileQuality(new QualityModel(Quality.Bluray1080p, new Revision(version: 2)));
++            _upgradeDisk.IsSatisfiedBy(_parseResultMulti, null).Accepted.Should().BeTrue();
+         }
+ 
+         [Test]
+diff --git a/src/NzbDrone.Core/DecisionEngine/Specifications/RssSync/MonitoredEpisodeSpecification.cs b/src/NzbDrone.Core/DecisionEngine/Specifications/RssSync/MonitoredEpisodeSpecification.cs
+index cbd36198d..bde6fc940 100644
+--- a/src/NzbDrone.Core/DecisionEngine/Specifications/RssSync/MonitoredEpisodeSpecification.cs
++++ b/src/NzbDrone.Core/DecisionEngine/Specifications/RssSync/MonitoredEpisodeSpecification.cs
+@@ -49,13 +49,22 @@ public virtual DownloadSpecDecision IsSatisfiedBy(RemoteEpisode subject, SearchC
+             if (monitoredCount == 0)
+             {
+                 _logger.Debug("No episodes in the release are monitored. Rejecting", monitoredCount, subject.Episodes.Count);
++                return DownloadSpecDecision.Reject(DownloadRejectionReason.EpisodeNotMonitored, "No episode in the release is monitored");
+             }
+-            else
++
++            if (subject.ParsedEpisodeInfo is { FullSeason: true })
+             {
+-                _logger.Debug("Only {0}/{1} episodes in the release are monitored. Rejecting", monitoredCount, subject.Episodes.Count);
++                _logger.Debug("Only {0}/{1} episodes in the season pack are monitored. Rejecting", monitoredCount, subject.Episodes.Count);
++                return DownloadSpecDecision.Reject(DownloadRejectionReason.EpisodeNotMonitored, "One or more episodes is not monitored");
+             }
+ 
+-            return DownloadSpecDecision.Reject(DownloadRejectionReason.EpisodeNotMonitored, "One or more episodes is not monitored");
++            // Cumulative multi-episode packs (S01E01-05, E1-4, ...) may contain episodes that
++            // are already downloaded and unmonitored. As long as at least one episode in the
++            // pack is monitored, the pack should not be rejected, otherwise the new monitored
++            // episodes inside the pack could never be grabbed.
++            _logger.Debug("{0}/{1} episodes in the release are monitored, accepting the pack.", monitoredCount, subject.Episodes.Count);
++
++            return DownloadSpecDecision.Accept();
+         }
+     }
+ }
+diff --git a/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs b/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs
+index 87937b762..f966ee115 100644
+--- a/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs
++++ b/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs
+@@ -3,6 +3,7 @@
+ using NzbDrone.Core.CustomFormats;
+ using NzbDrone.Core.IndexerSearch.Definitions;
+ using NzbDrone.Core.Parser.Model;
++using NzbDrone.Core.Profiles.Qualities;
+ 
+ namespace NzbDrone.Core.DecisionEngine.Specifications
+ {
+@@ -28,6 +29,13 @@ public virtual DownloadSpecDecision IsSatisfiedBy(RemoteEpisode subject, SearchC
+         {
+             var qualityProfile = subject.Series.QualityProfile.Value;
+ 
++            // Multi-episode packs (e.g. cumulative S01E01-05) are handled separately,
++            // see IsSatisfiedByMultiEpisodePack.
++            if (subject.Episodes.Count > 1)
++            {
++                return IsSatisfiedByMultiEpisodePack(subject, qualityProfile);
++            }
++
+             foreach (var file in subject.Episodes.Where(c => c.EpisodeFileId != 0).Select(c => c.EpisodeFile.Value))
+             {
+                 if (file == null)
+@@ -89,5 +97,77 @@ public virtual DownloadSpecDecision IsSatisfiedBy(RemoteEpisode subject, SearchC
+ 
+             return DownloadSpecDecision.Accept();
+         }
++
++        // Cumulative multi-episode packs (S01E01-05, E1-4, ...) contain both episodes that
++        // are already on disk and episodes that are still missing or need a quality upgrade.
++        // Such a pack is accepted as long as at least one monitored episode in it is wanted:
++        // either missing from disk (EpisodeFileId == 0) or upgradable with this release.
++        // Existing files that already meet the cutoff must not block the whole pack,
++        // otherwise the new episodes inside the pack could never be grabbed via
++        // RSS Sync or automatic search.
++        private DownloadSpecDecision IsSatisfiedByMultiEpisodePack(RemoteEpisode subject, QualityProfile qualityProfile)
++        {
++            var qualityReport = subject.ParsedEpisodeInfo.Quality;
++            var wantedFound = false;
++
++            foreach (var episode in subject.Episodes)
++            {
++                if (!episode.Monitored)
++                {
++                    _logger.Debug("Episode {0} is not monitored, ignoring it for the pack evaluation.", episode.Id);
++                    continue;
++                }
++
++                // Episode is missing from disk, it is always wanted.
++                if (episode.EpisodeFileId == 0)
++                {
++                    _logger.Debug("Episode {0} is missing from disk, pack contains a wanted episode.", episode.Id);
++                    wantedFound = true;
++                    break;
++                }
++
++                var file = episode.EpisodeFile.Value;
++                if (file == null)
++                {
++                    _logger.Debug("Episode {0} file is no longer available, skipping it for the pack evaluation.", episode.Id);
++                    continue;
++                }
++
++                var customFormats = _formatService.ParseCustomFormat(file);
++
++                if (!_upgradableSpecification.CutoffNotMet(qualityProfile,
++                        file.Quality,
++                        customFormats,
++                        qualityReport))
++                {
++                    _logger.Debug("Cutoff already met for episode {0}, it does not need the pack.", episode.Id);
++                    continue;
++                }
++
++                var upgradeableRejectReason = _upgradableSpecification.IsUpgradable(qualityProfile,
++                    file.Quality,
++                    customFormats,
++                    qualityReport,
++                    subject.CustomFormats);
++
++                if (upgradeableRejectReason == UpgradeableRejectReason.None)
++                {
++                    _logger.Debug("Episode {0} is upgradable, pack contains a wanted episode.", episode.Id);
++                    wantedFound = true;
++                    break;
++                }
++
++                _logger.Debug("Episode {0} exists on disk and is not upgradable with this release, due to: {1}", episode.Id, upgradeableRejectReason);
++            }
++
++            if (!wantedFound)
++            {
++                _logger.Debug("No monitored episode in the multi-episode pack is missing or upgradable, rejecting.");
++                return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCutoffMet, "Existing file meets cutoff for all monitored episodes in the pack");
++            }
++
++            _logger.Debug("Multi-episode pack contains at least one wanted (missing or upgradable) episode, accepting.");
++            return DownloadSpecDecision.Accept();
++        }
+     }
+ }
+diff --git a/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionBase.cs b/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionBase.cs
+index 48f6be3be..1b483883c 100644
+--- a/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionBase.cs
++++ b/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionBase.cs
+@@ -1,5 +1,6 @@
+ using System;
+ using System.Collections.Generic;
++using System.IO;
+ using System.Linq;
+ using System.Text.RegularExpressions;
+ using FluentValidation.Results;
+@@ -214,6 +215,8 @@ protected override string AddFromMagnetLink(RemoteEpisode remoteEpisode, string
+             _proxy.AddTorrentFromUrl(magnetLink, GetDownloadDirectory(), Settings);
+             _proxy.SetTorrentSeedingConfiguration(hash, remoteEpisode.SeedConfiguration, Settings);
+ 
++            SetUnwantedFiles(hash, remoteEpisode);
++
+             var isRecentEpisode = remoteEpisode.IsRecentEpisode();
+ 
+             if ((isRecentEpisode && Settings.RecentTvPriority == (int)TransmissionPriority.First) ||
+@@ -230,6 +233,8 @@ protected override string AddFromTorrentFile(RemoteEpisode remoteEpisode, string
+             _proxy.AddTorrentFromData(fileContent, GetDownloadDirectory(), Settings);
+             _proxy.SetTorrentSeedingConfiguration(hash, remoteEpisode.SeedConfiguration, Settings);
+ 
++            SetUnwantedFiles(hash, remoteEpisode);
++
+             var isRecentEpisode = remoteEpisode.IsRecentEpisode();
+ 
+             if ((isRecentEpisode && Settings.RecentTvPriority == (int)TransmissionPriority.First) ||
+@@ -241,6 +246,69 @@ protected override string AddFromTorrentFile(RemoteEpisode remoteEpisode, string
+             return hash;
+         }
+ 
++        private void SetUnwantedFiles(string hash, RemoteEpisode remoteEpisode)
++        {
++            try
++            {
++                // Only applicable for multi-episode packs where some episodes are already on disk.
++                if (remoteEpisode.Episodes.Count <= 1)
++                {
++                    return;
++                }
++
++                // Build a set of wanted episode numbers (missing or needing upgrade).
++                var wantedEpisodeNumbers = remoteEpisode.Episodes
++                    .Where(e => e.Monitored && e.EpisodeFileId == 0)
++                    .Select(e => e.EpisodeNumber)
++                    .ToHashSet();
++
++                // If all episodes are wanted, nothing to skip.
++                if (wantedEpisodeNumbers.Count == 0 || wantedEpisodeNumbers.Count == remoteEpisode.Episodes.Count)
++                {
++                    return;
++                }
++
++                var files = _proxy.GetTorrentFiles(hash, Settings);
++
++                if (files.Count <= 1)
++                {
++                    _logger.Debug("Torrent {0} has {1} file(s), cannot selectively skip files.", hash, files.Count);
++                    return;
++                }
++
++                var unwantedIndices = new List<int>();
++
++                for (var i = 0; i < files.Count; i++)
++                {
++                    var fileName = Path.GetFileNameWithoutExtension(files[i].Name);
++                    var parsed = Parser.Parser.ParseTitle(fileName);
++
++                    if (parsed == null || parsed.EpisodeNumbers.Length == 0)
++                    {
++                        // Can't determine what episodes this file covers — keep it (download).
++                        continue;
++                    }
++
++                    // If none of the episodes in this file are wanted, mark the file as unwanted.
++                    if (!parsed.EpisodeNumbers.Any(ep => wantedEpisodeNumbers.Contains(ep)))
++                    {
++                        unwantedIndices.Add(i);
++                        _logger.Debug("Marking file {0} (index {1}) as unwanted — episodes [{2}] are already on disk.", files[i].Name, i, string.Join(", ", parsed.EpisodeNumbers));
++                    }
++                }
++
++                if (unwantedIndices.Any())
++                {
++                    _logger.Info("Skipping {0} of {1} files in torrent {2} — only downloading wanted episodes.", unwantedIndices.Count, files.Count, hash);
++                    _proxy.SetTorrentFilesUnwanted(hash, unwantedIndices, Settings);
++                }
++            }
++            catch (Exception ex)
++            {
++                _logger.Warn(ex, "Failed to set unwanted files for torrent {0}. All files will be downloaded.", hash);
++            }
++        }
++
+         protected override void Test(List<ValidationFailure> failures)
+         {
+             failures.AddIfNotNull(TestConnection());
+diff --git a/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionProxy.cs b/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionProxy.cs
+index 2b827394d..180d2b7b1 100644
+--- a/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionProxy.cs
++++ b/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionProxy.cs
+@@ -26,6 +26,8 @@ public interface ITransmissionProxy
+         void RemoveTorrent(string hash, bool removeData, TransmissionSettings settings);
+         void MoveTorrentToTopInQueue(string hashString, TransmissionSettings settings);
+         void SetTorrentLabels(string hash, IEnumerable<string> labels, TransmissionSettings settings);
++        List<TransmissionTorrentFile> GetTorrentFiles(string hash, TransmissionSettings settings);
++        void SetTorrentFilesUnwanted(string hash, IEnumerable<int> fileIndices, TransmissionSettings settings);
+     }
+ 
+     public class TransmissionProxy : ITransmissionProxy
+@@ -188,6 +190,45 @@ public void SetTorrentLabels(string hash, IEnumerable<string> labels, Transmissi
+             ProcessRequest("torrent-set", arguments, settings);
+         }
+ 
++        public List<TransmissionTorrentFile> GetTorrentFiles(string hash, TransmissionSettings settings)
++        {
++            var arguments = new Dictionary<string, object>
++            {
++                { "fields", new List<string> { "files" } },
++                { "ids", new List<string> { hash } }
++            };
++
++            var result = ProcessRequest("torrent-get", arguments, settings);
++            var torrents = ((JArray)result.Arguments["torrents"]).ToObject<List<JObject>>();
++
++            if (torrents == null || torrents.Count == 0)
++            {
++                return new List<TransmissionTorrentFile>();
++            }
++
++            var files = torrents[0]["files"]?.ToObject<List<TransmissionTorrentFile>>();
++
++            return files ?? new List<TransmissionTorrentFile>();
++        }
++
++        public void SetTorrentFilesUnwanted(string hash, IEnumerable<int> fileIndices, TransmissionSettings settings)
++        {
++            var indices = fileIndices.ToList();
++
++            if (!indices.Any())
++            {
++                return;
++            }
++
++            var arguments = new Dictionary<string, object>
++            {
++                { "ids", new List<string> { hash } },
++                { "files-unwanted", indices }
++            };
++
++            ProcessRequest("torrent-set", arguments, settings);
++        }
++
+         private TransmissionResponse GetSessionVariables(TransmissionSettings settings)
+         {
+             // Retrieve transmission information such as the default download directory, bandwidth throttling and seed ratio.
+diff --git a/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionTorrent.cs b/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionTorrent.cs
+index 687bab40b..190e475d0 100644
+--- a/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionTorrent.cs
++++ b/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionTorrent.cs
+@@ -33,4 +33,10 @@ public class TransmissionTorrent
+         [JsonProperty(PropertyName = "fileCount")]
+         public int? VuzeFileCount { get; set; }
+     }
++
++    public class TransmissionTorrentFile
++    {
++        public string Name { get; set; }
++        public long Length { get; set; }
++    }
+ }
