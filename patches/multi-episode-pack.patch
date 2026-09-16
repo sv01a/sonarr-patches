@@ -1,26 +1,8 @@
-From 6fe5a86d3b9ba8bd05b9327af8bb28911a80ae96 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=D0=A1=D0=B8=D0=BC=D0=BE=D0=BD=D0=BE=D0=B2=20=D0=90=D0=BD?=
- =?UTF-8?q?=D0=B4=D1=80=D0=B5=D0=B9=20=D0=90=D0=BB=D0=B5=D0=BA=D1=81=D0=B0?=
- =?UTF-8?q?=D0=BD=D0=B4=D1=80=D0=BE=D0=B2=D0=B8=D1=87?= <simonov@proitr.ru>
-Date: Wed, 16 Sep 2026 08:10:03 +0500
-Subject: [PATCH] feat: cumulative multi-episode pack and transmission
- selective download
-
----
- .../MonitoredEpisodeSpecificationFixture.cs   | 16 +++-
- .../UpgradeDiskSpecificationFixture.cs        | 31 +++++--
- .../RssSync/MonitoredEpisodeSpecification.cs  | 15 +++-
- .../UpgradeDiskSpecification.cs               | 82 ++++++++++++++-----
- .../Clients/Transmission/TransmissionBase.cs  | 68 +++++++++++++++
- .../Clients/Transmission/TransmissionProxy.cs | 41 ++++++++++
- .../Transmission/TransmissionTorrent.cs       |  6 ++
- 7 files changed, 226 insertions(+), 33 deletions(-)
-
 diff --git a/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs b/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs
-index 34338a891..171ca9d8f 100644
+index 34338a891..64885fddc 100644
 --- a/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs
 +++ b/src/NzbDrone.Core.Test/DecisionEngineTests/MonitoredEpisodeSpecificationFixture.cs
-@@ -91,17 +91,25 @@ public void both_episodes_not_monitored_should_return_false()
+@@ -91,17 +91,19 @@ public void both_episodes_not_monitored_should_return_false()
          }
  
          [Test]
@@ -30,11 +12,6 @@ index 34338a891..171ca9d8f 100644
 +            // Cumulative multi-episode pack is accepted as long as at least one episode is monitored.
              WithFirstEpisodeUnmonitored();
 -            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, new()).Accepted.Should().BeFalse();
-+        [Test]
-+        public void should_return_true_if_only_first_episode_not_monitored_for_multi_episode_release()
-+        {
-+            // Cumulative multi-episode pack is accepted as long as at least one episode is monitored.
-+            WithFirstEpisodeUnmonitored();
 +            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, new()).Accepted.Should().BeTrue();
          }
  
@@ -46,7 +23,6 @@ index 34338a891..171ca9d8f 100644
              WithSecondEpisodeUnmonitored();
 -            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, new()).Accepted.Should().BeFalse();
 +            _monitoredEpisodeSpecification.IsSatisfiedBy(_parseResultMulti, new()).Accepted.Should().BeTrue();
-+        }
          }
  
          [Test]
@@ -141,7 +117,7 @@ index 71942c6f1..d48258547 100644
      }
  }
 diff --git a/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs b/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs
-index 4804f0ed9..fe5026379 100644
+index 4804f0ed9..ec810aabc 100644
 --- a/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs
 +++ b/src/NzbDrone.Core/DecisionEngine/Specifications/UpgradeDiskSpecification.cs
 @@ -110,15 +110,65 @@ public virtual DownloadSpecDecision IsSatisfiedBy(RemoteEpisode subject, Release
@@ -214,38 +190,36 @@ index 4804f0ed9..fe5026379 100644
                  }
              }
  
-@@ -161,26 +211,18 @@ private DownloadSpecDecision CheckUpgradeSpecification(NzbDrone.Core.MediaFiles.
-                 case UpgradeableRejectReason.BetterQuality:
-                     return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherPreference, "Existing file on disk is of equal or higher preference: {0}", file.Quality);
+@@ -165,22 +215,23 @@ private DownloadSpecDecision CheckUpgradeSpecification(NzbDrone.Core.MediaFiles.
+                     return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherRevision, "Existing file on disk is of equal or higher revision: {0}", file.Quality.Revision);
  
--                case UpgradeableRejectReason.BetterRevision:
--                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherRevision, "Existing file on disk is of equal or higher revision: {0}", file.Quality.Revision);
-+                case UpgradeableRejectReason.BetterCustomFormat:
-+                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherPreference, "Existing file on disk has equal or higher custom format score");
- 
--                case UpgradeableRejectReason.QualityCutoff:
+                 case UpgradeableRejectReason.QualityCutoff:
 -                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCutoffMet, "Existing file on disk meets quality cutoff: {0}", qualityProfile.Items[qualityProfile.GetIndex(qualityProfile.Cutoff).Index]);
-+                case UpgradeableRejectReason.SameQuality:
-+                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherPreference, "Existing file on disk is of same quality and does not have a higher custom format score: {0}", file.Quality);
- 
+-
 -                case UpgradeableRejectReason.CustomFormatCutoff:
 -                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCustomFormatCutoffMet, "Existing file on disk meets Custom Format cutoff: {0}", qualityProfile.CutoffFormatScore);
-+                case UpgradeableRejectReason.UpgradeNotAllowed:
 +                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCutoffMet, "Existing file meets cutoff: {0}", file.Quality);
  
--                case UpgradeableRejectReason.CustomFormatScore:
+                 case UpgradeableRejectReason.CustomFormatScore:
 -                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCustomFormatScore, "Existing file on disk has a equal or higher Custom Format score: {0}", qualityProfile.CalculateCustomFormatScore(customFormats));
--
--                case UpgradeableRejectReason.MinCustomFormatScore:
++                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherPreference, "Existing file on disk has equal or higher custom format score");
++
++                case UpgradeableRejectReason.CustomFormatCutoff:
++                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCutoffMet, "Existing file meets custom format cutoff");
+ 
+                 case UpgradeableRejectReason.MinCustomFormatScore:
 -                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCustomFormatScoreIncrement, "Existing file on disk has Custom Format score within Custom Format score increment: {0}", qualityProfile.MinUpgradeFormatScore);
--
--                case UpgradeableRejectReason.UpgradesNotAllowed:
++                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskHigherPreference, "Existing file on disk has a custom format score higher than the minimum custom format score");
+ 
+                 case UpgradeableRejectReason.UpgradesNotAllowed:
 -                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskUpgradesNotAllowed, "Existing file on disk and Quality Profile '{0}' does not allow upgrades", qualityProfile.Name);
+-            }
++                    return DownloadSpecDecision.Reject(DownloadRejectionReason.DiskCutoffMet, "Existing file meets cutoff: {0}", file.Quality);
+ 
+-            return null;
 +                default:
 +                    return null;
-             }
--
--            return null;
++            }
          }
      }
  }
@@ -422,6 +396,3 @@ index 687bab40b..190e475d0 100644
 +        public long Length { get; set; }
 +    }
  }
--- 
-2.50.1 (Apple Git-155)
-
