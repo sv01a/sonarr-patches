@@ -21,7 +21,7 @@ Custom Docker image build for **Sonarr v4** based on [LinuxServer.io Sonarr](htt
 ```yaml
 services:
   sonarr:
-    image: ghcr.io/<YOUR_GITHUB_USERNAME>/<REPO_NAME>:latest
+    image: ghcr.io/<YOUR_GITHUB_USERNAME>/sonarr-patches:latest
     container_name: sonarr
     environment:
       - PUID=1000
