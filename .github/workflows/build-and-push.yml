@@ -25,23 +25,34 @@ on:
         default: true
         type: boolean
   schedule:
-    # Run every Sunday at 03:00 UTC
-    - cron: '0 3 * * 0'
+    # Check upstream Sonarr v5 branch updates every 6 hours
+    - cron: '0 */6 * * *'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  check-and-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve Upstream Sonarr v5 Version
+        id: resolve_ver
+        run: |
+          TARGET_BRANCH="${{ github.event.inputs.sonarr_version || 'v5-develop' }}"
+          UPSTREAM_SHA=$(git ls-remote https://github.com/Sonarr/Sonarr.git "refs/heads/${TARGET_BRANCH}" | awk '{print substr($1,1,7)}')
+          
+          echo "Upstream ${TARGET_BRANCH} commit SHA: ${UPSTREAM_SHA:-latest}"
+          echo "sonarr_version=${TARGET_BRANCH}" >> $GITHUB_OUTPUT
+          echo "upstream_sha=${UPSTREAM_SHA:-latest}" >> $GITHUB_OUTPUT
+          echo "base_image=${{ github.event.inputs.base_image || 'lscr.io/linuxserver/sonarr:develop' }}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -57,14 +68,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine Sonarr version
-        id: vars
-        run: |
-          VERSION="${{ github.event.inputs.sonarr_version || 'v5-develop' }}"
-          BASE="${{ github.event.inputs.base_image || 'lscr.io/linuxserver/sonarr:develop' }}"
-          echo "sonarr_version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "base_image=${BASE}" >> $GITHUB_OUTPUT
-
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -74,8 +77,8 @@ jobs:
             type=raw,value=v5
             type=raw,value=v5-latest
             type=raw,value=develop
-            type=raw,value=${{ steps.vars.outputs.sonarr_version }}
-            type=sha,format=short
+            type=raw,value=v5-${{ steps.resolve_ver.outputs.upstream_sha }}
+            type=raw,value=${{ steps.resolve_ver.outputs.sonarr_version }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -86,7 +89,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SONARR_VERSION=${{ steps.vars.outputs.sonarr_version }}
-            BASE_IMAGE=${{ steps.vars.outputs.base_image }}
+            SONARR_VERSION=${{ steps.resolve_ver.outputs.sonarr_version }}
+            BASE_IMAGE=${{ steps.resolve_ver.outputs.base_image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
