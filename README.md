@@ -21,7 +21,7 @@ Custom Docker image build for **Sonarr v5 (`v5-develop`)** based on [LinuxServer
 ```yaml
 services:
   sonarr-v5:
-    image: ghcr.io/<YOUR_GITHUB_USERNAME>/sonarr-patches:v5
+    image: ghcr.io/sv01a/sonarr-patches:v5
     container_name: sonarr-v5
     environment:
       - PUID=1000
