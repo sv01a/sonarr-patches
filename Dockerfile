@@ -2,15 +2,22 @@
 ARG SONARR_VERSION=v5-develop
 ARG BASE_IMAGE=lscr.io/linuxserver/sonarr:develop
 
-# --- Build Stage (.NET 10 SDK for Sonarr v5) ---
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-preview-bookworm-slim AS builder
+# --- Build Stage (Dynamic .NET SDK installation for Sonarr v5) ---
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS builder
 ARG SONARR_VERSION
 ARG TARGETARCH
 
-RUN apt-get update && apt-get install -y git --no-install-recommends && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git curl ca-certificates jq --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 RUN git clone --depth 1 --branch ${SONARR_VERSION} https://github.com/Sonarr/Sonarr.git .
+
+# Install the exact .NET SDK version declared in global.json
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --jsonfile /src/global.json --install-dir /usr/share/dotnet || \
+    curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet
+
+ENV PATH="/usr/share/dotnet:${PATH}"
+ENV DOTNET_ROOT="/usr/share/dotnet"
 
 COPY patches/ /tmp/patches/
 RUN for patch in /tmp/patches/*.patch; do \
