@@ -33,7 +33,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  check-and-build:
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -53,6 +53,46 @@ jobs:
           echo "sonarr_version=${TARGET_BRANCH}" >> $GITHUB_OUTPUT
           echo "upstream_sha=${UPSTREAM_SHA:-latest}" >> $GITHUB_OUTPUT
           echo "base_image=${{ github.event.inputs.base_image || 'lscr.io/linuxserver/sonarr:develop' }}" >> $GITHUB_OUTPUT
+
+      - name: Clone Upstream Sonarr
+        run: |
+          git clone --depth 1 --branch ${{ steps.resolve_ver.outputs.sonarr_version }} https://github.com/Sonarr/Sonarr.git /tmp/sonarr-src
+          cd /tmp/sonarr-src
+          for patch in ${{ github.workspace }}/patches/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying $patch"
+              git apply --3way "$patch"
+            fi
+          done
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: /tmp/sonarr-src/global.json
+
+      - name: Build Sonarr v5 binaries (AMD64 & ARM64)
+        run: |
+          cd /tmp/sonarr-src
+          
+          echo "Building linux-musl-x64..."
+          dotnet publish src/NzbDrone.Console/Sonarr.Console.csproj \
+            -c Release \
+            -f net10.0 \
+            -r linux-musl-x64 \
+            --self-contained true \
+            -p:PublishTrimmed=false \
+            -p:SolutionDir=/tmp/sonarr-src/src/ \
+            -o ${{ github.workspace }}/out/amd64
+            
+          echo "Building linux-musl-arm64..."
+          dotnet publish src/NzbDrone.Console/Sonarr.Console.csproj \
+            -c Release \
+            -f net10.0 \
+            -r linux-musl-arm64 \
+            --self-contained true \
+            -p:PublishTrimmed=false \
+            -p:SolutionDir=/tmp/sonarr-src/src/ \
+            -o ${{ github.workspace }}/out/arm64
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -89,7 +129,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SONARR_VERSION=${{ steps.resolve_ver.outputs.sonarr_version }}
             BASE_IMAGE=${{ steps.resolve_ver.outputs.base_image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
